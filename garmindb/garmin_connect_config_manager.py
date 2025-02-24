@@ -4,6 +4,7 @@ __author__ = "Tom Goetz"
 __copyright__ = "Copyright Tom Goetz"
 __license__ = "GPL"
 
+
 import os
 import sys
 import platform
@@ -36,8 +37,7 @@ class GarminConnectConfigManager(JsonConfig):
             super().__init__(config_file)
         except Exception as e:
             print(str(e))
-            print(f"Missing or bad config: copy GarminConnectConfig.json.example from {os.path.dirname(os.path.abspath(__file__))} to {config_file} and edit it to "
-                  "add your Garmin Connect username and password.")
+            print(rf"Missing or bad config: copy GarminConnectConfig.json.example from {os.path.dirname(os.path.abspath(__file__))} to {config_file} and edit it to add your Garmin Connect username and password.")
             sys.exit(-1)
 
     def get_node_value(self, node, leaf):
@@ -59,13 +59,18 @@ class GarminConnectConfigManager(JsonConfig):
 
     @classmethod
     def get_config_dir(cls):
-        """Return the configured directory of where the configuation files will be stored."""
-        return cls.__create_dir_if_needed(cls.homedir + os.sep + '.GarminDb')
+        """
+        Compute the configuration directory relative to the repository root.
+        For your repo, climbing four levels up gets us to F:\projects\crypto\bitbucket\diet_tracker,
+        and then we use the "garmindb" folder.
+        """
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        config_dir = os.path.join(repo_root, "garmindb")
+        return cls.__create_dir_if_needed(config_dir)
 
-    @classmethod
-    def get_config_file(cls):
-        """Return the path to the configuation file."""
-        return cls.get_config_dir() + os.sep + 'GarminConnectConfig.json'
+    def get_config_file(self):
+        """Return the full path to the configuration file."""
+        return os.path.join(self.get_config_dir(), 'GarminConnectConfig.json')
 
     @classmethod
     def get_session_file(cls):
@@ -131,40 +136,56 @@ class GarminConnectConfigManager(JsonConfig):
         return self.get_base_dir() + os.sep + 'FitFiles' + os.sep + 'Monitoring'
 
     def get_monitoring_base_dir(self):
-        """Return the configured directory of where the monitoring files will be stored creating it if needed."""
-        return self.__create_dir_if_needed(self.__get_monitoring_base_dir())
+        """
+        Return the directory for monitoring data.
+        If set in the config file (under directories->monitoring_base_dir), use that.
+        Otherwise, default to a repository-relative path.
+        """
+        base = self.get_node_value('directories', 'monitoring_base_dir')
+        if base:
+            return base
+        else:
+            # Use repository-relative default: <repo_download_dir>/FitFiles/Monitoring
+            return os.path.join(self.get_download_dir(), "FitFiles", "Monitoring")
 
-    def get_monitoring_dir(self, year, test_dir=False):
-        """Return the configured directory of where the monitoring files will be stored creating it if needed."""
-        return self.__create_dir_if_needed(self.__get_monitoring_base_dir() + os.sep + str(year))
+    def get_monitoring_dir(self, year):
+        monitoring_dir = os.path.join(self.get_download_dir(), "FitFiles", "Monitoring", str(year))  # Added FitFiles
+        return self.__create_dir_if_needed(monitoring_dir)
 
-    def get_activities_dir(self, test_dir=False):
-        """Return the configured directory of where the activities files will be stored."""
-        return self.__create_dir_if_needed(self.__get_fit_files_dir(test_dir) + os.sep + 'Activities')
+    def get_activities_dir(self):
+        """Return the directory for activities data."""
+        activities_dir = os.path.join(self.get_download_dir(), "FitFiles", "Activities")  # Added FitFiles here
+        return self.__create_dir_if_needed(activities_dir)
 
     def get_sleep_dir(self):
         """Return the configured directory of where the sleep files will be stored."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'Sleep')
+        sleep_dir = os.path.join(self.get_download_dir(), "FitFiles", "Sleep")  # Added FitFiles here
+        return self.__create_dir_if_needed(sleep_dir)
 
     def get_weight_dir(self):
         """Return the configured directory of where the weight files will be stored."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'Weight')
+        weight_dir = os.path.join(self.get_download_dir(), "FitFiles", "Weight")  # Added FitFiles here
+        return self.__create_dir_if_needed(weight_dir)
 
     def get_rhr_dir(self):
         """Return the configured directory of where the resting heart rate files will be stored."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'RHR')
+        rhr_dir = os.path.join(self.get_download_dir(), "FitFiles", "Rhr")  # Added FitFiles here
+        return self.__create_dir_if_needed(rhr_dir)
 
     def get_fitbit_dir(self):
         """Return the configured directory of where the FitBit will be stored."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'FitBitFiles')
+        fitbit_dir = os.path.join(self.get_download_dir(), "FitFiles", "FitBitFiles")  # Added FitFiles here
+        return self.__create_dir_if_needed(fitbit_dir)
 
     def get_mshealth_dir(self):
         """Return the configured directory of where the Microsoft Health will be stored."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'MSHealth')
+        mshealth_dir = os.path.join(self.get_download_dir(), "FitFiles", "MSHealth")  # Added FitFiles here
+        return self.__create_dir_if_needed(mshealth_dir)
 
     def get_plugins_dir(self):
         """Return the configured directory where the plugin files are located."""
-        return self.__create_dir_if_needed(self.get_base_dir() + os.sep + 'Plugins')
+        plugins_dir = os.path.join(self.get_download_dir(), "FitFiles", "Plugins")  # Added FitFiles here
+        return self.__create_dir_if_needed(plugins_dir)
 
     def get_metric(self):
         """Return the unit system (metric, statute) that is configured."""
@@ -264,3 +285,12 @@ class GarminConnectConfigManager(JsonConfig):
         if not activities_list:
             activities_list = self.get_node_value_default('settings', 'default_display_activities', [])
         return [Sport.strict_from_string(activity) for activity in activities_list]
+
+    @classmethod
+    def get_download_dir(cls):
+        """Get download directory from environment or use default."""
+        download_base = os.environ.get("DOWNLOAD_BASE_DIR")
+        if download_base:
+            print(f"Using DOWNLOAD_BASE_DIR from environment: {download_base}")
+            return cls.__create_dir_if_needed(download_base)
+        # ... default case ...

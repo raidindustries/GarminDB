@@ -18,6 +18,14 @@ class Statistics(enum.Enum):
     rhr = 5
     weight = 6
     activities = 7
+    hydration = 8
+    monitoring_fit_files = 9
+    activity_fit_files = 10
+    activity_summary_files = 11
+    include_today = 12
+    profile_files = 13
+    overwrite_force_daily = 14
+    overwrite_force_activities = 15
 
     @classmethod
     def from_string(cls, string):

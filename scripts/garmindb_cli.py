@@ -1,4 +1,26 @@
 #!/usr/bin/env python3
+import os
+import sys
+
+# Insert the repository's root into sys.path to prioritize the local garmindb package.
+script_dir = os.path.dirname(os.path.abspath(__file__))
+repo_root = os.path.abspath(os.path.join(script_dir, ".."))
+if repo_root not in sys.path:
+    sys.path.insert(0, repo_root)
+
+# Now the rest of the imports will pick up the local package
+from garmindb import python_version_check, log_version, format_version
+from garmindb.garmindb import GarminDb, Attributes, Sleep, Weight, RestingHeartRate, MonitoringDb, MonitoringHeartRate, ActivitiesDb, GarminSummaryDb
+from garmindb.summarydb import SummaryDb
+from garmindb import Download, Copy, Analyze
+from garmindb import FitFileProcessor, ActivityFitFileProcessor, MonitoringFitFileProcessor, SleepFitFileProcessor
+from garmindb import GarminUserSettings, GarminSocialProfile, GarminPersonalInformation, GarminWeightData, GarminSummaryData, GarminMonitoringFitData, GarminSleepFitData, \
+    GarminSleepData, GarminRhrData, GarminSettingsFitData, GarminHydrationData
+from garmindb import GarminJsonSummaryData, GarminJsonDetailsData, GarminTcxData, GarminActivitiesFitData
+from garmindb import ActivityExporter
+from garmindb import GarminConnectConfigManager, PluginManager
+from garmindb import Statistics
+from garmindb import OpenWithBaseCamp, OpenWithGoogleEarth
 
 """
 A script that imports and analyzes Garmin health device data into a database.
@@ -11,33 +33,22 @@ __copyright__ = "Copyright Tom Goetz"
 __license__ = "GPL"
 
 import logging
-import sys
 import argparse
 import datetime
-import os
 import tempfile
 import zipfile
 import glob
 
-from garmindb import python_version_check, log_version, format_version
-from garmindb.garmindb import GarminDb, Attributes, Sleep, Weight, RestingHeartRate, MonitoringDb, MonitoringHeartRate, ActivitiesDb, GarminSummaryDb
-from garmindb.summarydb import SummaryDb
-
-from garmindb import Download, Copy, Analyze
-from garmindb import FitFileProcessor, ActivityFitFileProcessor, MonitoringFitFileProcessor, SleepFitFileProcessor
-from garmindb import GarminUserSettings, GarminSocialProfile, GarminPersonalInformation, GarminWeightData, GarminSummaryData, GarminMonitoringFitData, GarminSleepFitData, \
-    GarminSleepData, GarminRhrData, GarminSettingsFitData, GarminHydrationData
-from garmindb import GarminJsonSummaryData, GarminJsonDetailsData, GarminTcxData, GarminActivitiesFitData
-from garmindb import ActivityExporter
-
-from garmindb import GarminConnectConfigManager, PluginManager
-from garmindb import Statistics
-from garmindb import OpenWithBaseCamp, OpenWithGoogleEarth
-
-
-logging.basicConfig(filename='garmindb.log', filemode='w', level=logging.INFO)
+logging.basicConfig(
+    filename='garmindb.log',
+    filemode='w',
+    level=logging.DEBUG,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
 logger = logging.getLogger(__file__)
-logger.addHandler(logging.StreamHandler(stream=sys.stdout))
+stream_handler = logging.StreamHandler(stream=sys.stdout)
+stream_handler.setLevel(logging.INFO)
+logger.addHandler(stream_handler)
 root_logger = logging.getLogger()
 
 gc_config = GarminConnectConfigManager()
@@ -120,22 +131,35 @@ def download_data(overwite, latest, stats):
         else:
             activity_count = gc_config.all_activity_count()
         activities_dir = gc_config.get_activities_dir()
+        root_logger.info("\n=== ACTIVITIES PATH ===\n%s\n", activities_dir)
         root_logger.info("Fetching %d activities to %s", activity_count, activities_dir)
+        
+        # Always get activity types
         download.get_activity_types(activities_dir, overwite)
+        # Get activities (the method now checks config for what files to download)
         download.get_activities(activities_dir, activity_count, overwite)
 
     if Statistics.monitoring in stats:
         date, days = __get_date_and_days(MonitoringDb(db_params_dict), latest, MonitoringHeartRate, MonitoringHeartRate.heart_rate, 'monitoring')
+        enabled = [stat.name for stat in gc_config.enabled_stats()]
+        if 'include_today' in enabled:
+            days = days + 1
         if days > 0:
-            monitoring_dir = gc_config.get_monitoring_base_dir()
+            monitoring_dir = gc_config.get_monitoring_dir(date.year)
+            root_logger.info("\n=== MONITORING PATH ===\n%s\n", monitoring_dir)
             root_logger.info("Date range to update: %s (%d) to %s", date, days, monitoring_dir)
             download.get_daily_summaries(gc_config.get_monitoring_dir, date, days, overwite)
-            download.get_hydration(gc_config.get_monitoring_dir, date, days, overwite)
-            download.get_monitoring(gc_config.get_monitoring_dir, date, days)
+            if 'hydration' in enabled:
+                download.get_hydration(gc_config.get_monitoring_dir, date, days, overwite)
+            if 'monitoring_fit_files' in enabled:
+                download.get_monitoring(gc_config.get_monitoring_dir, date, days)
             root_logger.info("Saved monitoring files for %s (%d) to %s for processing", date, days, monitoring_dir)
 
     if Statistics.sleep in stats:
         date, days = __get_date_and_days(GarminDb(db_params_dict), latest, Sleep, Sleep.total_sleep, 'sleep')
+        enabled = [stat.name for stat in gc_config.enabled_stats()]
+        if 'include_today' in enabled:
+            days = days + 1
         if days > 0:
             sleep_dir = gc_config.get_sleep_dir()
             root_logger.info("Date range to update: %s (%d) to %s", date, days, sleep_dir)

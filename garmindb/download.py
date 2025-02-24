@@ -56,6 +56,8 @@ class Download():
         self.garth_session_file = self.gc_config.get_session_file()
         self.garth = GarthClient()
         self.garth.configure(domain=self.gc_config.get_garmin_base_domain())
+        self.enabled = [stat.name for stat in self.gc_config.enabled_stats()]
+        print(self.enabled)
 
     def __resume_session(self):
         if os.path.isfile(self.garth_session_file):
@@ -93,10 +95,12 @@ class Download():
         except GarthException:
             self.__login()
 
-        profile_dir = self.gc_config.get_fit_files_dir()
-        self.save_json_to_file(f'{profile_dir}/social-profile', self.garth.profile)
-        self.save_json_to_file(f'{profile_dir}/user-settings', self.garth.connectapi(f'{self.garmin_connect_user_profile_url}/user-settings'), True)
-        self.save_json_to_file(f'{profile_dir}/personal-information', self.garth.connectapi(f'{self.garmin_connect_user_profile_url}/personal-information'), True)
+        profile_dir = self.gc_config.get_fit_files_dir()        
+    
+        if 'profile_files' in self.enabled:
+            self.save_json_to_file(f'{profile_dir}/social-profile', self.garth.profile)
+            self.save_json_to_file(f'{profile_dir}/user-settings', self.garth.connectapi(f'{self.garmin_connect_user_profile_url}/user-settings'), True)
+            self.save_json_to_file(f'{profile_dir}/personal-information', self.garth.connectapi(f'{self.garmin_connect_user_profile_url}/personal-information'), True)
 
         self.display_name = self.garth.profile['displayName']
         self.full_name = self.garth.profile['fullName']
@@ -120,15 +124,15 @@ class Download():
     def __convert_to_json(cls, object):
         return object.__str__()
 
-    @classmethod
-    def save_json_to_file(cls, filename, json_data, overwite=False):
+    def save_json_to_file(self, filename, json_data, overwite):
         """Save JSON formatted data to a file."""
-        full_filename = f'{filename}.json'
-        exists = os.path.isfile(full_filename)
-        if not exists or overwite:
-            logger.debug("%s %s", 'Overwriting' if exists else 'Saving', full_filename)
-            with open(full_filename, 'w') as file:
-                file.write(json.dumps(json_data, default=cls.__convert_to_json))
+        if not filename.endswith('.json'):
+            filename = filename + '.json'
+        os.makedirs(os.path.dirname(filename), exist_ok=True)
+        if not isinstance(json_data, str):
+            json_data = json.dumps(json_data)
+        with open(filename, 'w') as file:
+            file.write(json_data)
 
     def save_binary_file(self, filename, url, overwite=False):
         """Save binary data to a file."""
@@ -165,6 +169,8 @@ class Download():
 
     def get_daily_summaries(self, directory_func, date, days, overwite):
         """Download the daily summary data from Garmin Connect and save to a JSON file."""
+        if 'overwrite_force_daily' in self.enabled:
+            overwite = True
         root_logger.info("Getting daily summaries: %s (%d)", date, days)
         self.__get_stat(self.__get_summary_day, directory_func, date, days, overwite)
 
@@ -219,6 +225,8 @@ class Download():
             root_logger.error("Exception getting activity summary: %s", e)
 
     def __save_activity_details(self, directory, activity_id_str, overwite):
+        if 'overwrite_force_activities' in self.enabled:
+            overwite = True
         root_logger.debug("save_activity_details")
         json_filename = f'{directory}/activity_details_{activity_id_str}'
         try:
@@ -241,22 +249,32 @@ class Download():
         self.temp_dir = tempfile.mkdtemp()
         logger.info("Getting activities: '%s' (%d) temp %s", directory, count, self.temp_dir)
         activities = self.__get_activity_summaries(0, count)
+        
+        download_fit = 'activity_fit_files' in self.enabled
+        download_summary = 'activity_summary_files' in self.enabled
+        
         for activity in tqdm(activities or [], unit='activities'):
             activity_id_str = str(activity['activityId'])
             activity_name_str = conversions.printable(activity.get('activityName'))
             root_logger.info("get_activities: %s (%s)", activity_name_str, activity_id_str)
-            json_filename = f'{directory}/activity_{activity_id_str}'
-            if not os.path.isfile(json_filename + '.json') or overwite:
-                root_logger.info("get_activities: %s <- %r", json_filename, activity)
-                self.__save_activity_details(directory, activity_id_str, overwite)
+            
+            # Always get activity details JSON
+            self.__save_activity_details(directory, activity_id_str, overwite)
+            
+            # Only save activity summary if enabled
+            if download_summary:
+                json_filename = f'{directory}/activity_{activity_id_str}'
                 self.save_json_to_file(json_filename, activity)
-                if not os.path.isfile(f'{directory}/{activity_id_str}.fit') or overwite:
-                    self.__save_activity_file(activity_id_str)
-                # pause for a second between every page access
-                time.sleep(1)
-            else:
-                root_logger.info("get_activities: skipping download of %s, already present", activity_id_str)
-        self.__unzip_files(directory)
+            
+            # Only download FIT files if enabled
+            if download_fit and (not os.path.isfile(f'{directory}/{activity_id_str}.fit') or overwite):
+                self.__save_activity_file(activity_id_str)
+            
+            # pause for a second between every page access
+            time.sleep(1)
+        
+        if download_fit:
+            self.__unzip_files(directory)
 
     def get_activity_types(self, directory, overwite):
         """Download the activity types from Garmin Connect and save to a JSON file."""
