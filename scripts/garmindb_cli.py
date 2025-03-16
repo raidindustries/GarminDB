@@ -38,6 +38,8 @@ import datetime
 import tempfile
 import zipfile
 import glob
+import time
+import threading
 
 logging.basicConfig(
     filename='garmindb.log',
@@ -119,13 +121,16 @@ def copy_data(overwite, latest, stats):
 def download_data(overwite, latest, stats):
     """Download selected activity types from Garmin Connect and save the data in files. Overwrite previously downloaded data if indicated."""
     logger.info("___Downloading %s Data___", 'Latest' if latest else 'All')
+    print(f"DEBUG: Starting download_data function with stats: {stats}")
 
     download = Download()
     if not download.login():
         logger.error("Failed to login!")
         sys.exit()
+    print("DEBUG: Successfully logged in to Garmin Connect")
 
     if Statistics.activities in stats:
+        print("DEBUG: Processing activities")
         if latest:
             activity_count = gc_config.latest_activity_count()
         else:
@@ -133,13 +138,18 @@ def download_data(overwite, latest, stats):
         activities_dir = gc_config.get_activities_dir()
         root_logger.info("\n=== ACTIVITIES PATH ===\n%s\n", activities_dir)
         root_logger.info("Fetching %d activities to %s", activity_count, activities_dir)
+        print(f"DEBUG: Fetching {activity_count} activities to {activities_dir}")
         
         # Always get activity types
+        print("DEBUG: Getting activity types")
         download.get_activity_types(activities_dir, overwite)
         # Get activities (the method now checks config for what files to download)
+        print("DEBUG: Getting activities")
         download.get_activities(activities_dir, activity_count, overwite)
+        print("DEBUG: Completed activities download")
 
     if Statistics.monitoring in stats:
+        print("DEBUG: Processing monitoring data")
         date, days = __get_date_and_days(MonitoringDb(db_params_dict), latest, MonitoringHeartRate, MonitoringHeartRate.heart_rate, 'monitoring')
         enabled = [stat.name for stat in gc_config.enabled_stats()]
         if 'include_today' in enabled:
@@ -148,39 +158,73 @@ def download_data(overwite, latest, stats):
             monitoring_dir = gc_config.get_monitoring_dir(date.year)
             root_logger.info("\n=== MONITORING PATH ===\n%s\n", monitoring_dir)
             root_logger.info("Date range to update: %s (%d) to %s", date, days, monitoring_dir)
+            print(f"DEBUG: Downloading monitoring data for {days} days starting from {date}")
+            print("DEBUG: Getting daily summaries")
             download.get_daily_summaries(gc_config.get_monitoring_dir, date, days, overwite)
             if 'hydration' in enabled:
+                print("DEBUG: Getting hydration data")
                 download.get_hydration(gc_config.get_monitoring_dir, date, days, overwite)
             if 'monitoring_fit_files' in enabled:
+                print("DEBUG: Getting monitoring fit files")
                 download.get_monitoring(gc_config.get_monitoring_dir, date, days)
+            print("DEBUG: Completed monitoring data download")
             root_logger.info("Saved monitoring files for %s (%d) to %s for processing", date, days, monitoring_dir)
 
     if Statistics.sleep in stats:
+        print("DEBUG: Processing sleep data")
         date, days = __get_date_and_days(GarminDb(db_params_dict), latest, Sleep, Sleep.total_sleep, 'sleep')
         enabled = [stat.name for stat in gc_config.enabled_stats()]
+        
+        # Calculate the actual number of days including today if needed
+        actual_days = days
         if 'include_today' in enabled:
-            days = days + 1
+            actual_days = days + 1
+            
         if days > 0:
             sleep_dir = gc_config.get_sleep_dir()
             root_logger.info("Date range to update: %s (%d) to %s", date, days, sleep_dir)
-            download.get_sleep(sleep_dir, date, days, overwite)
+            print(f"Downloading all sleep data from: {date} [{days}]")
+            print(f"DEBUG: Downloading sleep data for {actual_days} days starting from {date}")
+            
+            # Add manual progress tracking for sleep data
+            print(f"DEBUG: Starting sleep data download with progress tracking")
+            
+            # Create a custom progress tracking function
+            def sleep_progress_callback(current, total, date_str):
+                progress_msg = f"SLEEP_PROGRESS: {current}/{total} - {date_str}"
+                print(progress_msg)
+                sys.stdout.flush()
+            
+            # Call the original download.get_sleep function with our callback
+            download.get_sleep(sleep_dir, date, days, overwite, progress_callback=sleep_progress_callback)
+            
+            print("DEBUG: Completed sleep data download")
+            sys.stdout.flush()
             root_logger.info("Saved sleep files for %s (%d) to %s for processing", date, days, sleep_dir)
 
     if Statistics.weight in stats:
+        print("DEBUG: Processing weight data")
         date, days = __get_date_and_days(GarminDb(db_params_dict), latest, Weight, Weight.weight, 'weight')
         if days > 0:
             weight_dir = gc_config.get_weight_dir()
             root_logger.info("Date range to update: %s (%d) to %s", date, days, weight_dir)
+            print(f"DEBUG: Downloading weight data for {days} days starting from {date}")
             download.get_weight(weight_dir, date, days, overwite)
+            print("DEBUG: Completed weight data download")
             root_logger.info("Saved weight files for %s (%d) to %s for processing", date, days, weight_dir)
 
     if Statistics.rhr in stats:
+        print("DEBUG: Processing resting heart rate data")
         date, days = __get_date_and_days(GarminDb(db_params_dict), latest, RestingHeartRate, RestingHeartRate.resting_heart_rate, 'rhr')
         if days > 0:
             rhr_dir = gc_config.get_rhr_dir()
             root_logger.info("Date range to update: %s (%d) to %s", date, days, rhr_dir)
+            print(f"DEBUG: Downloading resting heart rate data for {days} days starting from {date}")
             download.get_rhr(rhr_dir, date, days, overwite)
+            print("DEBUG: Completed resting heart rate data download")
             root_logger.info("Saved rhr files for %s (%d) to %s for processing", date, days, rhr_dir)
+    
+    print("DEBUG: All downloads completed successfully")
 
 
 def import_data(debug, latest, stats):

@@ -198,9 +198,9 @@ class Download():
         root_logger.info("Checking weight: %s overwite %r", day, overwite)
         date_str = day.strftime('%Y-%m-%d')
         params = {
-            'startDate' : date_str,
-            'endDate'   : date_str,
-            '_'         : str(conversions.dt_to_epoch_ms(conversions.date_to_dt(day)))
+            'startDate': date_str,
+            'endDate': date_str,
+            '_': str(conversions.dt_to_epoch_ms(conversions.date_to_dt(day)))
         }
         json_filename = f'{directory}/weight_{date_str}'
         try:
@@ -216,8 +216,8 @@ class Download():
     def __get_activity_summaries(self, start, count):
         root_logger.info("get_activity_summaries")
         params = {
-            'start' : str(start),
-            "limit" : str(count)
+            'start': str(start),
+            "limit": str(count)
         }
         try:
             return self.garth.connectapi(self.garmin_connect_activity_search_url, params=params)
@@ -289,27 +289,189 @@ class Download():
     def __get_sleep_day(self, directory, date, overwite=False):
         json_filename = f'{directory}/sleep_{date}'
         params = {
-            'date'                  : date.strftime("%Y-%m-%d"),
-            'nonSleepBufferMinutes' : 60
+            'date': date.strftime("%Y-%m-%d"),
+            'nonSleepBufferMinutes': 60
         }
         url = f'{self.garmin_connect_sleep_daily_url}/{self.display_name}'
-        try:
-            self.save_json_to_file(json_filename, self.garth.connectapi(url, params=params), overwite)
-        except GarthHTTPError as e:
-            root_logger.error("Exception getting daily summary: %s", e)
+        
+        # Add simple timeout mechanism for problematic dates
+        import threading
+        import time
+        
+        # Function to execute the API call in a separate thread
+        def api_call_with_timeout():
+            try:
+                response = self.garth.connectapi(url, params=params)
+                # Store the result in a list to make it accessible outside the thread
+                result_container[0] = response
+                success_flag[0] = True
+            except Exception as e:
+                root_logger.error(f"Error getting sleep data for {date}: {e}")
+                error_container[0] = str(e)
+        
+        # Initialize containers for thread communication
+        result_container = [None]
+        success_flag = [False]
+        error_container = [None]
+        
+        # Create and start the thread
+        api_thread = threading.Thread(target=api_call_with_timeout)
+        api_thread.daemon = True
+        api_thread.start()
+        
+        # Wait for the thread with a timeout (10 seconds)
+        timeout = 10
+        start_time = time.time()
+        while api_thread.is_alive() and time.time() - start_time < timeout:
+            time.sleep(0.5)
+        
+        # Check the result
+        if success_flag[0] and result_container[0]:
+            # API call succeeded
+            self.save_json_to_file(json_filename, result_container[0], overwite)
+            root_logger.info(f"Successfully downloaded sleep data for {date}")
+        else:
+            # API call failed or timed out
+            if api_thread.is_alive():
+                root_logger.error(f"Sleep data download for {date} timed out after {timeout} seconds")
+            else:
+                root_logger.error(f"Failed to get sleep data for {date}: {error_container[0]}")
+            
+            # Create an empty sleep file to prevent future retries
+            if date == datetime.datetime.now().date():
+                root_logger.info(f"Creating empty sleep file for today's date ({date})")
+                empty_sleep_data = {"dailySleepDTO": {"sleepStartTimestampLocal": None, "sleepEndTimestampLocal": None}}
+                self.save_json_to_file(json_filename, empty_sleep_data, True)
 
-    def get_sleep(self, directory, date, days, overwite):
+    def get_sleep(self, directory, date, days, overwite, progress_callback=None):
         """Download the sleep data from Garmin Connect and save to a JSON file."""
         root_logger.info("Getting sleep: %s (%d)", date, days)
-        self.__get_stat(self.__get_sleep_day, directory, date, days, overwite)
+        
+        # Check if we need to include today
+        include_today = 'include_today' in self.enabled
+        today = datetime.datetime.now().date()
+        
+        # Calculate the actual number of days to download
+        actual_days = days
+        if include_today:
+            actual_days = days + 1
+            root_logger.info("Including today in sleep download, total days: %d", actual_days)
+        
+        # Process each day individually with progress reporting
+        for day_index in range(actual_days):
+            current_date = date + datetime.timedelta(days=day_index)
+            
+            # Skip dates beyond today
+            if current_date > today:
+                root_logger.info("Skipping future date: %s (beyond today: %s)", current_date, today)
+                continue
+            
+            # Report progress for each file as it's being downloaded
+            current = day_index + 1
+            root_logger.info("Sleep download progress: %d/%d - Date: %s", current, actual_days, current_date)
+            
+            # Use the callback if provided
+            if progress_callback:
+                progress_callback(current, actual_days, str(current_date))
+            else:
+                print(f"Sleep download progress: {current}/{actual_days} - Date: {current_date}")
+                sys.stdout.flush()  # Force flush the output to ensure it's captured by the parent process
+            
+            # Special handling for today's date
+            if current_date == today:
+                root_logger.info("Processing today's date (%s) with special handling", today)
+                
+                # Try to download with a shorter timeout
+                try:
+                    # Use a shorter timeout for today's date
+                    self.__get_sleep_day(directory, current_date, overwite)
+                except Exception as e:
+                    root_logger.warning("Error downloading sleep data for today (%s): %s", today, e)
+                    # Create an empty sleep file for today
+                    json_filename = f'{directory}/sleep_{current_date}'
+                    empty_sleep_data = {"dailySleepDTO": {"sleepStartTimestampLocal": None, "sleepEndTimestampLocal": None}}
+                    self.save_json_to_file(json_filename, empty_sleep_data, True)
+                    root_logger.info("Created empty sleep file for today's date (%s)", today)
+            else:
+                # Normal processing for past dates
+                self.__get_sleep_day(directory, current_date, overwite)
+            
+            # Small delay between requests to avoid rate limiting
+            time.sleep(1)
+        
+        root_logger.info("Sleep download completed successfully")
+        if progress_callback:
+            progress_callback(actual_days, actual_days, "Completed")
+        else:
+            print("Sleep download completed successfully")
+            sys.stdout.flush()  # Force flush the final message
+
+    def __get_sleep_day_with_timeout(self, directory, date, overwite=False, timeout=10):
+        """Get sleep data for a single day with timeout protection."""
+        json_filename = f'{directory}/sleep_{date}'
+        params = {
+            'date': date.strftime("%Y-%m-%d"),
+            'nonSleepBufferMinutes': 60
+        }
+        url = f'{self.garmin_connect_sleep_daily_url}/{self.display_name}'
+        
+        # Add simple timeout mechanism for problematic dates
+        import threading
+        
+        # Function to execute the API call in a separate thread
+        def api_call_with_timeout():
+            try:
+                response = self.garth.connectapi(url, params=params)
+                # Store the result in a list to make it accessible outside the thread
+                result_container[0] = response
+                success_flag[0] = True
+            except Exception as e:
+                root_logger.error(f"Error getting sleep data for {date}: {e}")
+                error_container[0] = str(e)
+        
+        # Initialize containers for thread communication
+        result_container = [None]
+        success_flag = [False]
+        error_container = [None]
+        
+        # Create and start the thread
+        api_thread = threading.Thread(target=api_call_with_timeout)
+        api_thread.daemon = True
+        api_thread.start()
+        
+        # Wait for the thread with a timeout
+        start_time = time.time()
+        while api_thread.is_alive() and time.time() - start_time < timeout:
+            time.sleep(0.5)
+        
+        # Check the result
+        if success_flag[0] and result_container[0]:
+            # API call succeeded
+            self.save_json_to_file(json_filename, result_container[0], overwite)
+            root_logger.info(f"Successfully downloaded sleep data for {date}")
+            return True
+        else:
+            # API call failed or timed out
+            if api_thread.is_alive():
+                root_logger.error(f"Sleep data download for {date} timed out after {timeout} seconds")
+            else:
+                root_logger.error(f"Failed to get sleep data for {date}: {error_container[0]}")
+            
+            # For today's date, create an empty file
+            if date == datetime.datetime.now().date():
+                root_logger.info(f"Creating empty sleep file for today's date ({date})")
+                empty_sleep_data = {"dailySleepDTO": {"sleepStartTimestampLocal": None, "sleepEndTimestampLocal": None}}
+                self.save_json_to_file(json_filename, empty_sleep_data, True)
+            
+            return False
 
     def __get_rhr_day(self, directory, day, overwite=False):
         date_str = day.strftime('%Y-%m-%d')
         json_filename = f'{directory}/rhr_{date_str}'
         params = {
-            'fromDate'  : date_str,
-            'untilDate' : date_str,
-            'metricId'  : 60
+            'fromDate': date_str,
+            'untilDate': date_str,
+            'metricId': 60
         }
         url = f'{self.garmin_connect_rhr}/{self.display_name}'
         try:

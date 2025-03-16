@@ -288,9 +288,13 @@ class GarminConnectConfigManager(JsonConfig):
 
     @classmethod
     def get_download_dir(cls):
-        """Get download directory from environment or use default."""
+        """Get download directory from environment or use a default based on the config directory."""
         download_base = os.environ.get("DOWNLOAD_BASE_DIR")
         if download_base:
             print(f"Using DOWNLOAD_BASE_DIR from environment: {download_base}")
             return cls.__create_dir_if_needed(download_base)
-        # ... default case ...
+        else:
+            # Fallback: use the config directory joined with 'download'
+            default_base = os.path.join(cls.get_config_dir(), "download")
+            print(f"DOWNLOAD_BASE_DIR not set. Using default download directory: {default_base}")
+            return cls.__create_dir_if_needed(default_base)
