@@ -207,10 +207,18 @@ class GarminConnectConfigManager(JsonConfig):
 
     def get_user(self):
         """Return the Garmin Connect username."""
+        # SECURITY FIX: Check environment variable first (secure passing from backend)
+        env_user = os.environ.get('GARMIN_USER')
+        if env_user:
+            return env_user
         return self.get_node_value('credentials', 'user')
 
     def get_password(self):
         """Return the Garmin Connect password."""
+        # SECURITY FIX: Check environment variable first (secure passing from backend)
+        env_password = os.environ.get('GARMIN_PASSWORD')
+        if env_password:
+            return env_password
         if self.get_node_value_default('credentials', 'secure_password', False):
             return self.get_secure_password()
         return self.get_node_value('credentials', 'password')
