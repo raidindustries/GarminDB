@@ -64,6 +64,10 @@ class GarminConnectConfigManager(JsonConfig):
         For your repo, climbing four levels up gets us to F:\projects\crypto\bitbucket\diet_tracker,
         and then we use the "garmindb" folder.
         """
+        config_dir = os.environ.get('GARMIN_CONFIG_DIR')
+        if config_dir:
+            return cls.__create_dir_if_needed(config_dir)
+
         repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
         config_dir = os.path.join(repo_root, "garmindb")
         return cls.__create_dir_if_needed(config_dir)
